@@ -13,6 +13,8 @@ https://bsmulski.shinyapps.io/documentation/
 - results/model - trained h2o model
 
 To load the model please type:
+```r
 library(h2o)
 h2o.init()
 model <- h2o.loadModel("results/model")
+```
