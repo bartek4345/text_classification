@@ -135,7 +135,8 @@ glm_model <- h2o.getModel("GLM_grid_1_AutoML_20190627_093200_model_1")
 glm_model@algorithm 
 glm_model@model$model_summary
 glm_model@model$training_metrics
-glm_model@model$cross_validation_metrics 
+glm_model@model$cross_validation_metrics
+
 # MAKING PREDICTION ----
 
 svd_test_data <- as.h2o(svd_test_data)
