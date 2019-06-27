@@ -65,7 +65,7 @@ tf_idf <- function(x, idf) {
 }
 
 # READING AND SPLIT DATA ----
-raw_data <- jsonlite::stream_in(file("/home/bsmulski/C4L Academy - Data Science Graduate - HEADLINES dataset (2019-06).json")) 
+raw_data <- jsonlite::stream_in(file("data/C4L Academy - Data Science Graduate - HEADLINES dataset (2019-06).json")) 
 raw_data <- as.data.table(raw_data)
 raw_data[ , is_sarcastic := as.factor(is_sarcastic)] # converting response variable to factor
 raw_data <- unique(raw_data) # there is ununique data - ~100 rows
@@ -91,7 +91,7 @@ toc()
 svd_train_data <- data.frame(is_sarcastic = train_data$is_sarcastic, # preaparing final data frame
                              text_length = train_data$text_length,
                              tfidf_train_irlba$v)
-saveRDS(svd_train_data, "/home/bsmulski/svd_train_data.rda")
+saveRDS(svd_train_data, "data/svd_train_data.rda")
 
 # BUILDING TEST DATA ----
 test_data <- clean_data(test_data)
@@ -110,7 +110,7 @@ svd_test_data <- t(sigma.inverse * u.transpose %*% t(test_tfidf))
 svd_test_data <- data.frame(is_sarcastic = test_data$is_sarcastic,
                             text_length = test_data$text_length,
                             svd_test_data)
-saveRDS(svd_test_data, "/home/bsmulski/svd_test_data.rda")
+saveRDS(svd_test_data, "data/svd_test_data.rda")
 
 # BUILDING MODELS ----
 h2o.init(max_mem_size = '70g')
@@ -124,7 +124,7 @@ model <- h2o.automl(x = x,
                     nfolds = 10,
                     balance_classes = TRUE,
                     exclude_algos = c("DeepLearning", "StackedEnsemble"),
-                    max_runtime_secs = 60*60*1)
+                    max_runtime_secs = 60*60*10)
 model_leader <- model@leader
 model_leader@algorithm 
 model_leader@model$model_summary
@@ -150,7 +150,7 @@ prediction <- h2o.predict(glm_model, svd_test_data) %>%
   as.data.table()
 prediction$actual <- as.vector(svd_test_data[["is_sarcastic"]])
 confusionMatrix(as.factor(prediction$actual), prediction$predict)
-h2o.saveModel(glm_model, "/home/bsmulski/")
-file.rename(file.path("/home/bsmulski/", glm_model@model_id), "/home/bsmulski/model")
-saveRDS(prediction, "/home/bsmulski/prediction.rda")
+h2o.saveModel(glm_model, "results/")
+file.rename(file.path("results/", glm_model@model_id), "results/model")
+saveRDS(prediction, "results/prediction.rda")
 # h2o.loadModel("/home/bsmulski/model")
