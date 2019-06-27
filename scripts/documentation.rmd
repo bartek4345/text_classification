@@ -1,0 +1,138 @@
+---
+title: "text_classification_report"
+author: "Bartosz Smulski"
+date: "26 czerwca 2019"
+output: html_document
+runtime: shiny
+---
+
+```{r init, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(data.table)
+library(magrittr)
+library(ggplot2)
+library(quanteda)
+library(plotly)
+library(tidytext)
+library(h2o)
+library(caret)
+library(shiny)
+library(knitr)
+h2o.init()
+raw_data <- jsonlite::stream_in(file("D:/gitowe/text_classification/data/C4L Academy - Data Science Graduate - HEADLINES dataset (2019-06).json")) %>% 
+  as.data.table()
+raw_data[, is_sarcastic := as.factor(is_sarcastic)]
+raw_data[, text_length := nchar(headline)]
+prediction <- readRDS("D:/gitowe/text_classification/results/prediction.rda")
+model <- h2o.loadModel("D:/gitowe/text_classification/results/model")
+```
+
+## Wstęp
+
+Celem zadania było przygotowanie klasyfikatora nagłówków prasowych rozpoznającego, czy dany tekst jest sarkastyczny, czy też nie. Modele zostały zbudowane w języku **R `r getRversion()`** oraz z wykorzystaniem narzędzia **h2o**.
+
+## Eksploracja zbioru danych
+
+Wejściowy zbiór danych zawierał 26709 nagłówków prasowych, z czego 107 było zduplikowanych. Sprawdzono rozkład zmiennej celu. 43,9 % nagłówków okazało się być sarkastycznych. W następnym kroku sprawdzono rozkłady długości tekstów. Z poniższego wykresu można wywnioskować, że długość tekstu (ilość znaków) może okazać się istotnym czynnikiem różnicującym nagłówki. Zostanie ona dodana jako dodatkowa zmienna do modelu.
+
+```{r texts_length_plot}
+ggplot(raw_data, aes(x = text_length, fill = is_sarcastic)) +
+      xlab("długość tekstu") +
+      geom_density(alpha=.6) +
+      ylab("gęstość rozkładu") +
+      labs(fill = "czy sarkastyczny") +
+      scale_fill_discrete(labels = c("Nie", "Tak"))
+```
+
+W modelu nieuwzględniono liczb, znaków specjalnych oraz znaków interpunkcyjnych. Jak wynika z literatury, czynnikiem wskazującym na sarkazm może być dodawanie przez autorów nagłówków dodatkowych liter do słów np. "okaaay".
+W danych odnotowano jednak zledwie kilka takich przypadków, przez co utworzenie takiej zmiennej w modelu wydało się być nieużyteczne. Stwierdzono brak wystąpienia dużych liter. W związku z tym, że ich wystąpienie mogłoby poprawić jakość klasyfikacji pojawia się pytanie, czy isnieje możliwość uzyskania zbioru danych uwzględniającego wielkość znaków? Sprawdzono również najczęściej występujące wyrazy. W tym celu dokonano tokenizacji oraz usunięto słowa nie niosące informacji (stopwords). Na poniższym wykresie przedstawiono 50 najczęściej występujących słów.
+
+```{r frequent_words_plot}
+tokenized_data <- tokens(x = raw_data$headline, what = 'word',
+                         remove_numbers = TRUE,
+                         remove_hyphens = TRUE,
+                         remove_punct = TRUE,
+                         remove_symbols = TRUE)
+tokenized_data <- tokens_tolower(tokenized_data)
+tokenized_data <- tokens_select(tokenized_data, stop_words$word,
+                                selection = "remove")
+tokenized_data <- tokens_wordstem(tokenized_data, language = "english")
+
+bag_of_words_model <- dfm(tokenized_data, tolower = FALSE)
+bag_of_words_data <- suppressWarnings(as.data.frame(bag_of_words_model))
+freq <- as.data.table(colSums(bag_of_words_data[,-1]))
+freq[, "variable" := names(bag_of_words_data[,-1])]
+freq <- freq[order(-rank(V1))]
+word_freq_plot <- ggplot(data = freq[1:50]) +
+  geom_bar(aes(x = reorder(variable, -V1), y = V1), stat = "identity") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  xlab("word") +
+  ylab("count")
+
+ggplotly(word_freq_plot, width = 900)
+```
+
+## Przygotowanie zbioru danych
+
+Dane zostały podzielone na podzbiory treningowy (70%) oraz testowy (30%). Każdy ze zbiorów przygotowano osobno. Po przeprowadzeniu eksploracji oraz tokenizacji, stwierdzono, że dane nadal wymagają obróbki. Usunięto dodatkowe stopwordsy, znaki specjalne, cyfry rzymskie, które zostały pominięte podczas automatycznego czyszczenia danych. W związku z tym, że 68% tekstów, w których wystąpił adres strony internetowej okazało się być sarkastyczne, zdecydowano się na zastąpienie ich wyrazem "weblink". Wyrażenie występujące po symbolu '#' zostały usunięte z powodu braku możliwości utworzenia wzorca, który mógłby je rozdzielić na pojedyncze słowa. Na tak obrobionych danych dokonano Stemmingu - algorytm dr Martina Portera. W celu uwzględnienia następujących po sobie słów do zmiennych dodano bigramy. W rezultacie otrzymano macierz 26,602 tekstów opisanych za pomocą 127,881 zmiennych. Zdecydowano się na użycie reprezentacji danych TF-IDF (term frequency - inverse document frequency). W celu zmniejszenia liczby zmiennych dokonano częściowej dekompozycji głównych składowych za pomocą algorytmu IRLBA. Ostatecznie uzyskano zbiór 501 zmiennych (500 wektorów własnych oraz zmienna odpowiadająca za długość tekstu).
+
+## Budowa modelu
+
+Modele zostały zaimplementowane z wykorzystaniem narzędzia h2o. Przy wyborze najlepszego klasyfikatora rozpatrzono regresję logistyczną, drzewa decyzyjne, lasy losowe, GBM oraz XGBoost. W celu oszacowania jakości modelu użyto 10 krotnej kroswalidacji. W rezultacie powstały modele klasyfikacyjne z wykorzystaniem modułu „automl” narzędzia h2o, który wyszukuje spośród dostępnych algorytmów oraz parametrów model o najwyższym AUC.
+
+## Rezultaty
+
+Algorytmy bazujące na drzewach okazały się być skłonne do przeuczania. Z tego względu pomimo że najlepsze wyniki na próbkach kroswalidacyjnych uzyskano dla algorytmu XGBoost zdecydowano się na wybór regresji logistycznej. Długość tekstu okazała się być istotną zmienną we wszystkich zbudowanych modelach. Poniżej zaprezentowano wyniki dla wcześniej przygotowanego zbioru testowego. Najwyższą wartość accuracy uzyskano dla progu odcęcia (threshold w poniższej aplikacji) równego 0.39 - 70% poprawnie sklasyfikowanych tekstów. Jeżeli jednak zależałoby Państwu na niskim odsetku klasyfikowania tekstów niesarkastycznych jako sarkastycznych należałoby rozważyć podwyższenie tego porgu np. 0.8. Podniesienie progu spowoduje jednak znaczny spadek czułości (odsetka poprawnie sklasyfikowanych tekstów sarkastycznych).
+
+
+```{r functions}
+  select_metrics_cols <- function(data){
+    data <- as.data.table(t(data$byClass))
+    data <- data[, .(ACC = `Balanced Accuracy`, Sensitivity, Specificity, Precision, Recall, F1)]
+    }
+```
+
+```{r shiny_app}
+
+build_shiny_element <- function(prediction) {
+
+  shinyApp(
+    ui = fluidPage(
+      tags$head(includeCSS("www/style.css")),
+      fluidRow(style = "padding-bottom: 20px;",
+               column(4, sliderInput("treshold",
+                                     label = h4("Threshold"),
+                                     min = 0.01,
+                                     max = 0.99,
+                                     value = 0.5,
+                                     step = 0.01))
+        ),
+      fluidRow(
+        column(1, HTML(paste(rep("<br>", 3), collapse = " ")), HTML("<p class='rotate'><b>Prediction</b></p>")),
+        column(2, HTML("<b><right>Reference</right></b>"), tableOutput('confusion_matrix')),
+        column(2, tableOutput("metrics"), offset = 1)
+      )
+    ),
+
+    server = function(input, output, session) {
+      pred_react <- reactive({
+        pred_react <- prediction
+        pred_react[p1 < input$treshold, PREDICTED := 0]
+        pred_react[p1 >= input$treshold, PREDICTED := 1]
+        cm <- confusionMatrix(as.factor(pred_react$PREDICTED), as.factor(pred_react$actual), positive = "1")
+      })
+      
+      output$confusion_matrix <- renderTable(rownames = TRUE, as.data.frame.matrix(pred_react()$table))
+      output$metrics <- renderTable(select_metrics_cols(pred_react()))
+    },
+
+    options = list(height = 1000)
+)
+}
+```
+
+```{r results_table}
+
+build_shiny_element(prediction)
+
+```
